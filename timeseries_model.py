@@ -65,10 +65,10 @@ class Config:
 
     # ── Loss weights ──────────────────────────────────────────────
     lambda_jepa:  float = 1.0
-    lambda_kl:    float = 0.1     # start small, can anneal up
+    lambda_kl:    float = 0.5     # raised from 0.1 — prevents z_std drift
     lambda_id:    float = 0.5
     lambda_dec:   float = 1.0
-    temperature:  float = 0.07   # NT-Xent temperature
+    temperature:  float = 0.15   # raised from 0.07 — NT-Xent more stable
 
     # ── Training ──────────────────────────────────────────────────
     lr:           float = 1e-4
@@ -325,6 +325,9 @@ class Identifier(nn.Module):
             nn.GELU(),
             nn.Linear(cfg.id_hidden * 2, self.n_w),
         )
+        # Small init: dynamics weights start near zero → ODE stable at t=0
+        nn.init.normal_(self.weight_head[-1].weight, std=0.01)
+        nn.init.zeros_(self.weight_head[-1].bias)
 
         # ── Contrastive projection head ──────────────────────────
         self.proj_head = nn.Sequential(
@@ -409,9 +412,13 @@ class EulerODE(nn.Module):
         z0 : (B, latent_dim)
         Returns (B, H, latent_dim)
         """
+        # dt normalizes the step so total trajectory drift ≤ 1 per dim (via tanh).
+        # Prevents the exponential blowup that occurs without it (24 unclamped steps).
+        dt = 1.0 / n_steps
         z, traj = z0, []
         for _ in range(n_steps):
-            z = z + _apply_dynamic_mlp(z, dyn_layers)
+            dz = _apply_dynamic_mlp(z, dyn_layers)
+            z = z + dt * torch.tanh(dz)
             traj.append(z)
         return torch.stack(traj, dim=1)   # (B, H, D)
 
@@ -477,8 +484,8 @@ class TimeSeriesModel(nn.Module):
     # ── Identifier contrastive step ───────────────────────────────
 
     def _id_contrastive(self, x: torch.Tensor) -> torch.Tensor:
-        """Two 5%-noise augmentations → NT-Xent."""
-        scale = x.std(dim=1, keepdim=True) * 0.05
+        """Two 20%-noise augmentations → NT-Xent."""
+        scale = x.std(dim=1, keepdim=True) * 0.20   # raised from 0.05
         _, h1 = self.ident(x + torch.randn_like(x) * scale)
         _, h2 = self.ident(x + torch.randn_like(x) * scale)
         return self.ident.contrastive_loss(h1, h2)
