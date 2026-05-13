@@ -1,4 +1,6 @@
 import numpy as np
+import torch
+from torch.utils.data import DataLoader, TensorDataset, Subset
 
 
 # ══════════════════════════════════════════════════════
@@ -1061,6 +1063,77 @@ def make_windows(series, Q, H, stride=1):
     past   = np.stack([series[i*stride       : i*stride+Q]   for i in range(N)])
     future = np.stack([series[i*stride+Q     : i*stride+Q+H] for i in range(N)])
     return past, future
+
+def build_dataloaders(
+    X_past:   np.ndarray,
+    X_future: np.ndarray,
+    cfg,
+    train_ratio: float = 0.7,
+    val_ratio:   float = 0.15,
+    # test = 1 - train - val = 0.15
+    seed: int = 42,
+):
+    """
+    Parameters
+    ----------
+    X_past   : (N, Q, C)
+    X_future : (N, H, C)
+    cfg      : Config  — needs cfg.batch_size
+
+    Returns
+    -------
+    train_dl, val_dl, test_dl : DataLoaders
+    split_indices             : dict with keys "train", "val", "test"
+                                each containing the original row indices
+    """
+    N = len(X_past)
+    assert len(X_future) == N
+
+    # ── Convert to tensors ──────────────────────────────────────
+    X = torch.tensor(X_past,   dtype=torch.float32)
+    Y = torch.tensor(X_future, dtype=torch.float32)
+    ds = TensorDataset(X, Y)
+
+    # ── Reproducible shuffle ────────────────────────────────────
+    rng  = np.random.default_rng(seed)
+    perm = rng.permutation(N)
+
+    n_train = int(N * train_ratio)
+    n_val   = int(N * val_ratio)
+
+    idx_train = perm[:n_train]
+    idx_val   = perm[n_train : n_train + n_val]
+    idx_test  = perm[n_train + n_val:]
+
+    # ── DataLoaders ─────────────────────────────────────────────
+    train_dl = DataLoader(
+        Subset(ds, idx_train),
+        batch_size=cfg.batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=0,
+        pin_memory=torch.cuda.is_available(),
+    )
+    val_dl = DataLoader(
+        Subset(ds, idx_val),
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
+    test_dl = DataLoader(
+        Subset(ds, idx_test),
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=0,
+    )
+
+    split_indices = {
+        "train": idx_train,
+        "val":   idx_val,
+        "test":  idx_test,
+    }
+
+    return train_dl, val_dl, test_dl, split_indices
 
 def build_pretrain_dataset(n_series=5000, series_len=500, Q=96, H=24, stride=10):
     all_past, all_future, all_labels = [], [], []
