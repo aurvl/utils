@@ -3,3 +3,9 @@ data/
 __pycache__*
 note.txt
 .vscode/
+
+# Local AI project memory
+.ai-memory/
+
+# Claude Code local settings
+.claude/

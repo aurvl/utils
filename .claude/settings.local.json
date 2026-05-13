@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(Get-ChildItem \"C:\\\\Users\\\\aurel\\\\Documents\\\\Deep Learning\\\\LatentDEWM for Time Series\" -Depth 1)",
-      "Bash(Select-Object Name, PSIsContainer)",
-      "PowerShell(git *)"
-    ]
-  }
-}
